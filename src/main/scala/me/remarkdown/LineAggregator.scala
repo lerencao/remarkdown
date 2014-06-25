@@ -36,77 +36,107 @@ class LineReader private(val lines: Seq[String], val lineOffset: Int) extends Re
 trait LineAggregator extends Parsers {
   type Elem = String
 
-  val $emptyLine: Parser[Elem] = accept("")
+  val $any: Parser[Elem] = acceptIf(line => true)(line => "this should not appear")
+
+  /**
+   * empty line
+   */
+  val $emptyLine: Parser[Empty.type] = accept("") ^^^ Empty
 
   /**
    * heading
    */
-  val $heading: Parser[Elem] =
-    Parser { in: Reader[Elem] =>
-      if (in.atEnd) Failure("end of reader", in)
-      else if (in.first matches """^#{1,6}.+""") Success(in.first, in.rest)
-      else Failure("not a heading", in)
+  val $heading: Parser[Heading] = Parser { in =>
+    val pattern = """^(#{1,6})(.+)""".r
+    if(in.atEnd) Failure("end of input", in)
+    else in.first match {
+      case pattern(l, s) => Success(Heading(l.length, s), in.rest)
+      case _ => Failure("not a heading", in)
     }
-
-  val $horizontalRule: Parser[Elem] = acceptIf(_.matches("""^={8,}"""))(line => "at least 8 equals")
-
-  val $any: Parser[Elem] =
-    Parser { in: Reader[Elem] =>
-      if (in.atEnd) Failure("end of input", in)
-      else Success(in.first, in.rest)
-    }
+  }
+  /**
+   * horizontal rule
+   */
+  val $horizontalRule: Parser[HorizontalRule.type] =
+    acceptIf(_.matches("""^={8,}"""))(line => "at least 8 equals") ^^^ HorizontalRule
 
   /**
    * block quote
    */
-  val $blockquoteStart: Parser[Elem] = accept(">>>")
-  val $blockquote: Parser[Elem] =
-    ($blockquoteStart ~ rep(not($blockquoteStart) ~> $any) ~ $blockquoteStart) ^^ {
-      case s1 ~ ss ~ s2 => s1 + "\n" + ss.mkString("\n") + "\n" + s2
+  val $blockquoteMark: Parser[Elem] = accept(">>>")
+  val $blockquote: Parser[BlockQuote] =
+    ($blockquoteMark ~> rep(not($blockquoteMark) ~> $any) <~ $blockquoteMark) ^^ { ls =>
+      BlockQuote(ls.mkString("\n"))
     }
 
   /**
    * code block
    */
-  val $codeblockStart: Parser[Elem] = accept("```")
-  val $codeblock: Parser[Elem] =
-    ($codeblockStart ~ rep(not($codeblockStart) ~> $any) ~ $codeblockStart) ^^ {
-      case s1 ~ ss ~ s2 => s1 + "\n" + ss.mkString("\n") + "\n" + s2
+  val $codeblockMark: Parser[Elem] = accept("```")
+  val $codeblock: Parser[CodeBlock] =
+    ($codeblockMark ~> rep(not($codeblockMark) ~> $any) <~ $codeblockMark) ^^ { ls =>
+      CodeBlock(ls.mkString("\n"))
     }
+
+  /**
+   * indented line, two or three spaces
+   */
+  val $indentedLine: Parser[Elem] = acceptIf(line => line matches """^\s{2,3}.+""")(line => "un-indent line")
 
   /**
    * only support "-." as the starter of unordered list
    */
-  val $unorderedlistMark: Parser[Elem] = acceptIf(line => line matches """^-\..+""")(line => "not list item mark")
-  val $indentedLine: Parser[Elem] = acceptIf(line => line matches """^\s{2,3}.+""")(line => "un-indent line")
-  val $unorderedlistitem: Parser[Elem] =
+  val $unorderedlistMark: Parser[Elem] =
+    acceptIf(line => line matches """^-\..+""")(line => "not list item mark")
+  val $unorderedlistitem: Parser[ListItem] =
     ($unorderedlistMark ~ rep($indentedLine | $emptyLine)) ^^ {
-      case s ~ ss => s + "\n" + ss.mkString("\n")
+      case s ~ ss => ListItem(s + "\n" + ss.mkString("\n"))
     }
-  val $unorderedList: Parser[Elem] =
-    rep1($unorderedlistitem) ^^ { _.mkString("\n\n") }
+  val $unorderedList: Parser[List] =
+    rep1($unorderedlistitem) ^^ { items => List(kind = true, items) }
 
   /**
    * only support "[number]." as the starter of ordered list
    */
   val $orderedlistMark: Parser[Elem] =
     acceptIf(line => line matches """^[1-9][0-9]*\..+""")(line => "not list item mark")
-  val $orderedlistItem: Parser[Elem] =
+  val $orderedlistItem: Parser[ListItem] =
     ($orderedlistMark ~ rep($indentedLine | $emptyLine)) ^^ {
-      case s ~ ss => s + "\n" + ss.mkString("\n")
+      case s ~ ss => ListItem(s + "\n" + ss.mkString("\n"))
     }
-  val $orderedList: Parser[Elem] =
-    rep1($orderedlistItem) ^^ (_.mkString("\n\n"))
+  val $orderedList: Parser[List] =
+    rep1($orderedlistItem) ^^ { items => List(kind = false, items) }
+
+  /**
+   * normal line, to compose a paragraph
+   */
+  val $normalLine: Parser[Elem] =
+    (
+      not($emptyLine)         ~
+      not($horizontalRule)    ~
+      not($heading)           ~
+      not($blockquoteMark)    ~
+      not($codeblockMark)     ~
+      not($unorderedlistMark) ~
+      not($orderedlistMark)   ~
+      not($indentedLine)
+    ) ~> $any
 
   /**
    * paragraph
    */
-  val $paragraph: Parser[Elem] =
-    rep1((not($emptyLine) ~ not($heading) ~ not($blockquote) ~ not($codeblock)) ~> $any) ^^ (_.mkString)
+  val $paragraph: Parser[Paragraph] = rep1($normalLine) ^^ { ls => Paragraph(ls.mkString) }
 
 
-  val $block: Parser[Elem] =
-    $emptyLine | $heading | $horizontalRule | $blockquote | $codeblock |  $unorderedList | $orderedList | $paragraph
+  val $block: Parser[Block] =
+    $emptyLine      |
+    $horizontalRule |
+    $heading        |
+    $blockquote     |
+    $codeblock      |
+    $unorderedList  |
+    $orderedList    |
+    $paragraph
 
   /**
    * group lines into blocks
