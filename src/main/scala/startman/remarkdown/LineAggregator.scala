@@ -1,4 +1,4 @@
-package me.remarkdown
+package startman.remarkdown
 
 import scala.util.parsing.combinator.Parsers
 import scala.util.parsing.input.{Position, Reader}
