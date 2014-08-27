@@ -8,18 +8,19 @@ import scala.util.parsing.input.{Position, Reader}
  * @param lines sequence of string lines separated by newline(\n)
  *@param lineOffset current reader point
  */
-class LineReader private(val lines: Seq[String], val lineOffset: Int) extends Reader[String] {
+class LineSequenceReader private(val lines: Seq[String], val lineOffset: Int) extends Reader[String] {
+  import LineSequenceReader._
 
   def this(lines: Seq[String]) = this(lines, 0)
 
-  override def first: String = lines(lineOffset)
+  def first: String = if (lineOffset < lines.length) lines(lineOffset) else EofStr
 
-  override def rest: Reader[String] =
-    if (lineOffset < lines.length) new LineReader(lines, lineOffset + 1) else this
+  def rest: Reader[String] =
+    if (lineOffset < lines.length) new LineSequenceReader(lines, lineOffset + 1) else this
 
-  override def atEnd: Boolean = lineOffset >= lines.length
+  def atEnd: Boolean = lineOffset >= lines.length
 
-  override def pos: Position = new Position {
+  def pos: Position = new Position {
     override def column: Int = 1
 
     override def line: Int = lineOffset
@@ -27,6 +28,13 @@ class LineReader private(val lines: Seq[String], val lineOffset: Int) extends Re
     override protected def lineContents: String = first
   }
 
+  override def drop(n: Int): LineSequenceReader = {
+    new LineSequenceReader(lines, lineOffset + n)
+  }
+}
+
+object LineSequenceReader {
+  final val EofStr = "\n"
 }
 
 
